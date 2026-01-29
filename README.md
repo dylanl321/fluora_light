@@ -15,6 +15,16 @@ docker compose up
 
 Then open `http://localhost:8123`, finish onboarding, and add the “Fluora Light” integration.
 
+Note: for local dev, you do **not** need HACS at all (and you’ll avoid any GitHub download issues while iterating).
+
+## Debugging UDP locally (captures real packets)
+
+If you want to see exactly what Home Assistant is sending, you can run a local UDP listener and point your integration at it (set the Fluora Light host to your PC and port to `6767`, or choose another port).
+
+```bash
+python tools/udp_dump.py --port 6767
+```
+
 ## Install (HACS)
 
 1. In Home Assistant, go to HACS → Integrations → “Custom repositories”.
