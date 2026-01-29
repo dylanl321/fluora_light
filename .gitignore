@@ -169,3 +169,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Local device dumps / captures (may include MAC/IP/serial/routes)
+**/floura_config.txt
+
+# Home Assistant dev config (local run)
+config/.storage/
+config/home-assistant_v2.db*
+config/home-assistant.log*
+config/*.log

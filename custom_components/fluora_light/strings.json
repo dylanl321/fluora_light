@@ -1,0 +1,15 @@
+{
+  "title": "Fluora Light",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Fluora Light",
+        "data": {
+          "name": "Name of your light",
+          "hostname": "Hostname or IP address",
+          "port": "Port (default 6767)"
+        }
+      }
+    }
+  }
+}
