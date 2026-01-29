@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import struct
 from enum import StrEnum
 from typing import Any
 
-from homeassistant.components.light import ATTR_BRIGHTNESS, ATTR_EFFECT
+from homeassistant.components.light import ATTR_BRIGHTNESS, ATTR_EFFECT, ATTR_HS_COLOR
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
@@ -14,10 +15,18 @@ from .const import (
     BRIGHTNESS_HEX_LAST,
     COLOR_EFFECTS,
     EFFECT_AUTO,
+    EFFECT_CUSTOM,
     EFFECT_WHITE,
+    HUE_OFFSET,
+    HUE_ROUTE,
     LOGGER,
     MANUAL_HEX,
+    MANUAL_SIZE_ROUTE,
+    MANUAL_SPEED_ROUTE,
     MAX_SATURATION_HEX,
+    SATURATION_MAX,
+    SATURATION_MIN,
+    SATURATION_ROUTE,
     MIN_SATURATION_HEX,
     POWER_OFF_HEX,
     POWER_ON_HEX,
@@ -42,6 +51,9 @@ class LightState(StrEnum):
     BRIGHTNESS = ATTR_BRIGHTNESS
     POWER = "power"
     EFFECT = ATTR_EFFECT
+    HS_COLOR = ATTR_HS_COLOR
+    SPEED = "speed"
+    SIZE = "size"
 
 
 class LightCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -71,6 +83,9 @@ class LightCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             LightState.BRIGHTNESS: 255,
             LightState.POWER: True,
             LightState.EFFECT: EFFECT_AUTO,
+            LightState.HS_COLOR: (0.0, 100.0),
+            LightState.SPEED: 0.5,
+            LightState.SIZE: 0.5,
         }
 
     @property
@@ -121,6 +136,48 @@ class LightCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         async with self._send_lock:
             await self.hass.async_add_executor_job(self._sock.send, payload)
 
+    def _osc_payload(self, route: str, typetags: str, args: list[Any]) -> bytes:
+        """Create an OSC-like payload.
+
+        The Fluora device speaks an OSC-style protocol: address string, type tags, then big-endian args.
+        """
+
+        def _pad4(b: bytes) -> bytes:
+            return b + (b"\x00" * ((4 - (len(b) % 4)) % 4))
+
+        if not typetags.startswith(","):
+            raise ValueError("typetags must start with ',' (e.g. ',fi')")
+
+        addr = _pad4(route.encode("ascii") + b"\x00")
+        tags = _pad4(typetags.encode("ascii") + b"\x00")
+
+        out = bytearray()
+        out += addr
+        out += tags
+
+        tag_list = typetags[1:]
+        if len(tag_list) != len(args):
+            raise ValueError("typetags and args length mismatch")
+
+        for tag, arg in zip(tag_list, args, strict=True):
+            if tag == "f":
+                out += struct.pack(">f", float(arg))
+            elif tag == "i":
+                out += struct.pack(">i", int(arg))
+            else:
+                raise ValueError(f"Unsupported OSC tag: {tag!r}")
+
+        return bytes(out)
+
+    async def _async_send_osc(self, route: str, typetags: str, args: list[Any]) -> None:
+        payload = self._osc_payload(route, typetags, args)
+        async with self._send_lock:
+            if not self._initialized:
+                await self._async_initialize()
+            if self._sock is None:
+                raise UpdateFailed("Socket not initialized")
+            await self.hass.async_add_executor_job(self._sock.send, payload)
+
     async def async_update_state(self, key: LightState, value: Any) -> bool:
         if not self._initialized:
             await self._async_initialize()
@@ -148,11 +205,42 @@ class LightCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await self._async_send_hex(MAX_SATURATION_HEX)
                 await asyncio.sleep(0.1)
                 await self._async_send_hex(SCENE_HEX_DICT[value])
+            elif value == EFFECT_CUSTOM:
+                # "Custom" is set by HS color control; selecting it directly is a no-op.
+                return False
             else:
                 return False
 
         elif key == LightState.POWER:
             await self._async_send_hex(POWER_ON_HEX if value else POWER_OFF_HEX)
+
+        elif key == LightState.HS_COLOR:
+            # HA gives (hue_deg 0-360, sat_pct 0-100)
+            hue_deg, sat_pct = value
+
+            # Convert to the device's 0..1 float space (with a hue wheel offset).
+            hue = (float(hue_deg) / 360.0 + HUE_OFFSET) % 1.0
+
+            sat_pct = max(0.0, min(100.0, float(sat_pct)))
+            sat = SATURATION_MIN + (sat_pct / 100.0) * (SATURATION_MAX - SATURATION_MIN)
+
+            # Switch to manual mode then update palette.
+            await self._async_send_hex(MANUAL_HEX)
+            await asyncio.sleep(0.05)
+            await self._async_send_osc(SATURATION_ROUTE, ",fi", [sat, 0])
+            await asyncio.sleep(0.05)
+            await self._async_send_osc(HUE_ROUTE, ",fi", [hue, 0])
+
+            # reflect state in HA
+            self.data[LightState.EFFECT] = EFFECT_CUSTOM
+
+        elif key == LightState.SPEED:
+            speed = max(0.0, min(1.0, float(value)))
+            await self._async_send_osc(MANUAL_SPEED_ROUTE, ",fi", [speed, 0])
+
+        elif key == LightState.SIZE:
+            size = max(0.0, min(1.0, float(value)))
+            await self._async_send_osc(MANUAL_SIZE_ROUTE, ",fi", [size, 0])
 
         else:
             return False

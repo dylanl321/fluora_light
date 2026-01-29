@@ -5,6 +5,7 @@ from typing import Any
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_EFFECT,
+    ATTR_HS_COLOR,
     ColorMode,
     LightEntity,
     LightEntityDescription,
@@ -38,7 +39,7 @@ class FluoraLightEntity(FluoraLightBaseEntity, LightEntity):
     """Representation of a Fluora Light."""
 
     _attr_has_entity_name = True
-    _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
+    _attr_supported_color_modes = {ColorMode.HS, ColorMode.BRIGHTNESS}
     _attr_supported_features = LightEntityFeature.EFFECT
     _attr_assumed_state = True
 
@@ -48,7 +49,7 @@ class FluoraLightEntity(FluoraLightBaseEntity, LightEntity):
 
     @property
     def color_mode(self) -> ColorMode:
-        return ColorMode.BRIGHTNESS
+        return ColorMode.HS
 
     @property
     def brightness(self) -> int | None:
@@ -57,6 +58,10 @@ class FluoraLightEntity(FluoraLightBaseEntity, LightEntity):
     @property
     def effect(self) -> str | None:
         return self.coordinator.state[LightState.EFFECT]
+
+    @property
+    def hs_color(self) -> tuple[float, float] | None:
+        return self.coordinator.state.get(LightState.HS_COLOR)
 
     @property
     def is_on(self) -> bool:
@@ -68,6 +73,9 @@ class FluoraLightEntity(FluoraLightBaseEntity, LightEntity):
 
         if ATTR_BRIGHTNESS in kwargs:
             await self.coordinator.async_update_state(LightState.BRIGHTNESS, kwargs[ATTR_BRIGHTNESS])
+
+        if ATTR_HS_COLOR in kwargs:
+            await self.coordinator.async_update_state(LightState.HS_COLOR, kwargs[ATTR_HS_COLOR])
 
         if ATTR_EFFECT in kwargs:
             await self.coordinator.async_update_state(LightState.EFFECT, kwargs[ATTR_EFFECT])
